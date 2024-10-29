@@ -306,7 +306,8 @@ impl MemorySet {
     }
 
     #[allow(unused)]
-    fn sort_area_by_start(&mut self) {
+    /// sort areas by their corresponding start vpn
+    pub fn sort_area_by_start(&mut self) {
         self.areas.sort_by(|a, b| {
             a.vpn_range.get_start().cmp(&b.vpn_range.get_start()) 
         })
@@ -341,16 +342,12 @@ impl MemorySet {
         }
     }
 
-    /// determine the overlap type of given range and the existed ranges
-    pub fn overlap(&mut self, start: VirtAddr, end: VirtAddr) -> OverlapType {
-        self.sort_area_by_start();
-
+    /// determine the overlap type of given range and the existed ranges, require areas to be
+    /// sorted by start of each range
+    pub fn overlap(&self, start: VirtAddr, end: VirtAddr) -> OverlapType {
         let (start_vpn, end_vpn) = (start.floor(), end.ceil());
         let idx = self.binary_search_vpn(end_vpn);
-        println!("Start va: {:#?}, end va: {:#?}", start, end);
-        println!("Start vpn: {:#?}, end vpn: {:#?}", start_vpn, end_vpn);
         let range = &self.areas[idx].vpn_range;
-        println!("idx: {:#?}, start: {:#?}, end: {:#?}", idx, range.get_start(), range.get_end());
         if start_vpn >= range.get_end() {
             OverlapType::None 
         } else if start_vpn >= range.get_start() && end_vpn <= range.get_end() {

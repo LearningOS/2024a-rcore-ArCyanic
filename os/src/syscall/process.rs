@@ -88,7 +88,8 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel: sys_mmap ");
-    let memory_set = unsafe { &mut *current_memory_set() };
+    let mut memory_set = current_memory_set();
+    memory_set.sort_area_by_start();
     let start_va = VirtAddr::from(_start);
     let end_va = VirtAddr::from(_start + _len);
     if _port & !0x7 != 0 
@@ -112,7 +113,8 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!("kernel: sys_munmap");
-    let memory_set = unsafe { &mut *current_memory_set() };
+    let mut memory_set = current_memory_set();
+    memory_set.sort_area_by_start();
     let start_va = VirtAddr::from(_start);
     if !start_va.aligned() { return -1; }
     let end_va = VirtAddr::from(_start + _len);
