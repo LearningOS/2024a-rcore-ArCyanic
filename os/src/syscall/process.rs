@@ -1,7 +1,7 @@
 //! Process management syscalls
 use crate::{
     config::MAX_SYSCALL_NUM, 
-    mm::{copy_data_to_va, MapPermission, PageTable, VirtAddr, OverlapType}, 
+    mm::{copy_data_to_va, translated_byte_buffer, MapPermission, OverlapType, PageTable, VirtAddr}, 
     task::{
         change_program_brk, current_memory_set, current_user_token, exit_current_and_run_next, get_first_invoked_time, get_syscall_times, suspend_current_and_run_next, TaskStatus
     }, 
@@ -17,7 +17,6 @@ pub struct TimeVal {
 
 /// Task information
 #[allow(dead_code)]
-#[repr(C)]
 pub struct TaskInfo {
     /// Task status in it's life cycle
     status: TaskStatus,
@@ -74,6 +73,8 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
         syscall_times: get_syscall_times(),
         time: get_time_ms() - get_first_invoked_time()
     };
+
+    // let result = translated_byte_buffer(current_user_token(), _ti as *const , len)
 
     let data = unsafe {
         core::slice::from_raw_parts(

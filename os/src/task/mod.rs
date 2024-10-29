@@ -143,7 +143,7 @@ impl TaskManager {
 
     /// Get the current 'Running' task's trap contexts.
     fn get_current_memory_set(&'static self) -> RefMut<'static, MemorySet> {
-        let mut inner = self.inner.exclusive_access();
+        let inner = self.inner.exclusive_access();
         let current = inner.current_task;
         RefMut::map(inner, |temp| &mut temp.tasks[current].memory_set)
     }
