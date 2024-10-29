@@ -15,7 +15,9 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::MemorySet;
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -23,6 +25,8 @@ use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
+
+use crate::config::MAX_SYSCALL_NUM;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -46,6 +50,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    first_invoked_times: Vec<usize>,
+    syscall_times: Vec<[u32; MAX_SYSCALL_NUM]>,
 }
 
 lazy_static! {
@@ -55,8 +61,12 @@ lazy_static! {
         let num_app = get_num_app();
         println!("num_app = {}", num_app);
         let mut tasks: Vec<TaskControlBlock> = Vec::new();
+        let mut first_invoked_times = Vec::new();
+        let mut syscall_times = Vec::new();
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
+            first_invoked_times.push(0);
+            syscall_times.push([0; MAX_SYSCALL_NUM]);
         }
         TaskManager {
             num_app,
@@ -64,6 +74,8 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    first_invoked_times,
+                    syscall_times
                 })
             },
         }
@@ -77,6 +89,7 @@ impl TaskManager {
     /// But in ch4, we load apps statically, so the first task is a real app.
     fn run_first_task(&self) -> ! {
         let mut inner = self.inner.exclusive_access();
+        inner.first_invoked_times[0] = get_time_ms();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
@@ -126,6 +139,13 @@ impl TaskManager {
         inner.tasks[inner.current_task].get_trap_cx()
     }
 
+    /// Get the current 'Running' task's trap contexts.
+    fn get_current_memory_set(&self) -> *mut MemorySet {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].get_memory_set()
+    }
+
     /// Change the current 'Running' task's program break
     pub fn change_current_program_brk(&self, size: i32) -> Option<usize> {
         let mut inner = self.inner.exclusive_access();
@@ -139,6 +159,9 @@ impl TaskManager {
         if let Some(next) = self.find_next_task() {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
+            if inner.first_invoked_times[current] == 0 {
+                inner.first_invoked_times[current] = get_time_ms();
+            }
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
@@ -153,6 +176,39 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn update_syscall_times(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.syscall_times[current][id] += 1;
+    }
+
+    fn get_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.syscall_times[current]
+    }
+
+    fn get_first_invoked_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.first_invoked_times[current]
+    }
+}
+
+/// get first invoked time of task
+pub fn get_first_invoked_time() -> usize {
+    TASK_MANAGER.get_first_invoked_time()
+}
+
+/// get syscall times of task 
+pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_syscall_times()
+}
+
+/// update syscall times
+pub fn update_syscall_times(id: usize) {
+    TASK_MANAGER.update_syscall_times(id);
 }
 
 /// Run the first task in task list.
@@ -168,8 +224,7 @@ fn run_next_task() {
 
 /// Change the status of current `Running` task into `Ready`.
 fn mark_current_suspended() {
-    TASK_MANAGER.mark_current_suspended();
-}
+    TASK_MANAGER.mark_current_suspended(); }
 
 /// Change the status of current `Running` task into `Exited`.
 fn mark_current_exited() {
@@ -196,6 +251,11 @@ pub fn current_user_token() -> usize {
 /// Get the current 'Running' task's trap contexts.
 pub fn current_trap_cx() -> &'static mut TrapContext {
     TASK_MANAGER.get_current_trap_cx()
+}
+
+/// get the current 'Running' task's memory set 
+pub fn current_memory_set() -> *mut MemorySet {
+    TASK_MANAGER.get_current_memory_set()
 }
 
 /// Change the current 'Running' task's program break

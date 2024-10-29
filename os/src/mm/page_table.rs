@@ -1,5 +1,7 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
+use crate::config::PAGE_SIZE;
+
 use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -170,4 +172,42 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+pub fn copy_data_to_va(token: usize, _va: usize, data: &[u8]) {
+    let page_table = PageTable::from_token(token);
+    let len = data.len();
+    let start_va = VirtAddr::from(_va);
+    let mut vpn = start_va.floor();
+    let mut ppn = page_table.translate(vpn).unwrap().ppn();
+    vpn.step();
+    let remain_page_len = PAGE_SIZE - start_va.page_offset();
+    let mut src: &[u8];
+    let mut dst: &mut [u8];
+    let mut i: usize = start_va.page_offset(); // index of page here 
+
+    // if current page is large enough
+    if remain_page_len >= len {
+        dst = &mut ppn.get_bytes_array()[i..i + len];
+        dst.copy_from_slice(data);
+        return;
+    } 
+
+    // when data spans at least 2 pages, copy data to the first one first 
+    src = &data[..remain_page_len];
+    dst = &mut ppn.get_bytes_array()[i..];
+    dst.copy_from_slice(src);
+
+    // then copy data to other pages start-aligned
+    i = remain_page_len; // index of data here 
+    while i < len {
+        ppn = page_table.translate(vpn).unwrap().ppn();
+        vpn.step();
+        let remain_data_len = len - i;
+        let copy_len = remain_data_len.min(PAGE_SIZE);
+        src = &data[i..i + copy_len];
+        dst = &mut ppn.get_bytes_array()[..copy_len];
+        dst.copy_from_slice(src);
+        i += copy_len;
+    }
 }

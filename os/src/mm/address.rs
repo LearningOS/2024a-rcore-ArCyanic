@@ -1,3 +1,9 @@
+// NOTE: 默认情况下 MMU 未被使能（启用），此时无论 CPU 位于哪个特权级，
+// 访存的地址都会作为一个物理地址交给对应的内存控制单元来直接访问物理内存。
+// 我们可以通过修改 S 特权级的一个名为 satp 的 CSR 来启用分页模式，
+// 在这之后 S 和 U 特权级的访存地址会被视为一个虚拟地址，它需要经过 MMU 的地址转换变为一个物理地址，
+// 再通过它来访问物理内存；而 M 特权级的访存地址，我们可设定是内存的物理地址。
+
 //! Implementation of physical and virtual address and page number.
 use super::PageTableEntry;
 use crate::config::{PAGE_SIZE, PAGE_SIZE_BITS};
@@ -213,6 +219,7 @@ where
     l: T,
     r: T,
 }
+
 impl<T> SimpleRange<T>
 where
     T: StepByOne + Copy + PartialEq + PartialOrd + Debug,

@@ -63,12 +63,39 @@ impl MemorySet {
             None,
         );
     }
+
+    pub fn remove_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        idx: usize
+    ) {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.floor();
+        let area = &self.areas[idx];
+        if start_vpn == area.vpn_range.get_start() && end_vpn == area.vpn_range.get_end() {
+            self.remove_area(idx);
+        } else if start_vpn == area.vpn_range.get_start() {
+            self.shrink_from(start_va, area.vpn_range.get_end().into());
+        } else if end_vpn == area.vpn_range.get_end() {
+            self.shrink_to(area.vpn_range.get_start().into(), end_va);
+        } else {
+            let area = &mut self.areas[idx];
+            let new_area = area.split(&mut self.page_table, start_vpn, end_vpn);
+            self.areas.push(new_area);
+        }
+    }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
         }
         self.areas.push(map_area);
+    }
+
+    fn remove_area(&mut self, idx: usize) {
+        self.areas[idx].unmap(&mut self.page_table);
+        self.areas.remove(idx);
     }
     /// Mention that trampoline is not collected by areas.
     fn map_trampoline(&mut self) {
@@ -248,6 +275,21 @@ impl MemorySet {
         }
     }
 
+    #[allow(unused)]
+    pub fn shrink_from(&mut self, new_start: VirtAddr, end: VirtAddr) -> bool {
+        if let Some(area) = self 
+            .areas 
+            .iter_mut()
+            // NOTE: I'm not sure about the `end.ceil()` here
+            .find(|area| area.vpn_range.get_end() == end.ceil())
+        {
+            area.shrink_from(&mut self.page_table, new_start.floor());
+            true
+        } else {
+            false
+        }
+    }
+
     /// append the area to new_end
     #[allow(unused)]
     pub fn append_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {
@@ -261,6 +303,62 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    #[allow(unused)]
+    fn sort_area_by_start(&mut self) {
+        self.areas.sort_by(|a, b| {
+            a.vpn_range.get_start().cmp(&b.vpn_range.get_start()) 
+        })
+    }
+
+    #[allow(unused)]
+    // find the range whose start addr is smaller than target while is adjecent to it.
+    fn binary_search_vpn(&self, target: VirtPageNum) -> usize {
+        let vec = &self.areas;
+        let mut l = 0;
+        let mut r = vec.len() - 1;
+        let mut m;
+
+        while l < r {
+            // NOTE: this `+ 1` here is essential, it make the midpoint calculation slightly favors
+            // upper half when `l` and `r` are close together.
+            m = (l + r + 1) >> 1;
+            let v = vec[m].vpn_range.get_start();
+            // NOTE: Notice that we need to find the largest one among those smaller than target,
+            // so every value which is larger or equal to target will not be considered.
+            if target <= v { r = m - 1; }
+            else { l = m; }
+        }
+        r
+    }
+
+    #[allow(unused)]
+    fn print_ranges(&self) {
+        for area in self.areas.iter() {
+            let range = area.vpn_range;
+            println!("({:#?}, {:#?}) ", range.get_start(), range.get_end());
+        }
+    }
+
+    /// determine the overlap type of given range and the existed ranges
+    pub fn overlap(&mut self, start: VirtAddr, end: VirtAddr) -> OverlapType {
+        self.sort_area_by_start();
+
+        let (start_vpn, end_vpn) = (start.floor(), end.ceil());
+        let idx = self.binary_search_vpn(end_vpn);
+        println!("Start va: {:#?}, end va: {:#?}", start, end);
+        println!("Start vpn: {:#?}, end vpn: {:#?}", start_vpn, end_vpn);
+        let range = &self.areas[idx].vpn_range;
+        println!("idx: {:#?}, start: {:#?}, end: {:#?}", idx, range.get_start(), range.get_end());
+        if start_vpn >= range.get_end() {
+            OverlapType::None 
+        } else if start_vpn >= range.get_start() && end_vpn <= range.get_end() {
+            OverlapType::Covered(idx)
+        } else {
+            OverlapType::Other
+        }
+
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory
@@ -327,6 +425,36 @@ impl MapArea {
         }
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
+
+    #[allow(unused)]
+    pub fn shrink_from(&mut self, page_table: &mut PageTable, new_start: VirtPageNum) {
+        for vpn in VPNRange::new(self.vpn_range.get_start(), new_start) {
+            self.unmap_one(page_table, vpn);
+        }
+        self.vpn_range = VPNRange::new(new_start, self.vpn_range.get_end());
+    }
+
+    #[allow(unused)]
+    pub fn split(&mut self, page_table: &mut PageTable, start_vpn: VirtPageNum, end_vpn: VirtPageNum) -> Self {
+        // unmap those in desired range
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            self.unmap_one(page_table, vpn);
+        }
+
+        // construct a new Maparea, which is splitted from current
+        let data_frames = self.data_frames.split_off(&end_vpn);
+        let mut result = Self {
+            vpn_range: VPNRange::new(end_vpn, self.vpn_range.get_end()),
+            data_frames,
+            map_type: self.map_type,
+            map_perm: self.map_perm,
+        };
+
+        // update current vpn range 
+        self.vpn_range = VPNRange::new(self.vpn_range.get_start(), start_vpn);
+        result
+    }
+
     #[allow(unused)]
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
@@ -363,6 +491,13 @@ impl MapArea {
 pub enum MapType {
     Identical,
     Framed,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum OverlapType {
+    None,
+    Covered(usize),
+    Other
 }
 
 bitflags! {
