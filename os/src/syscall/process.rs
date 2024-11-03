@@ -1,14 +1,15 @@
 //! Process management syscalls
-use alloc::sync::Arc;
+use core::slice;
 
+use alloc::sync::Arc;
 use crate::{
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{translated_byte_buffer, translated_refmut, translated_str,
+    MapPermission, OverlapType, VirtAddr},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
-    },
+        add_task, current_memory_set, current_task, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus
+    }, timer::get_time_us,
 };
 
 #[repr(C)]
@@ -119,10 +120,30 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().pid.0
     );
-    -1
+    let len = core::mem::size_of::<TimeVal>();
+    let buf = _ts as *const u8;
+    let byte_buffer = translated_byte_buffer(current_user_token(), buf, len);
+
+    let time = get_time_us();
+    let data = &TimeVal {
+        sec: time / 1_000_000,
+        usec: time % 1_000_000,
+    } as *const TimeVal as *const u8;
+    let data_bytes = unsafe {
+        slice::from_raw_parts(data, len)
+    };
+
+    let mut offset = 0;
+    for buffer in byte_buffer {
+        let end = offset + buffer.len();
+        buffer.copy_from_slice(&data_bytes[offset..end]);
+        offset = end;
+    }
+    0
+
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -142,7 +163,27 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let memory_set = unsafe { current_memory_set().as_mut().unwrap() };
+    memory_set.sort_area_by_start();
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+    if _port & !0x7 != 0 
+    || _port & 0x7 == 0
+    || memory_set.overlap(start_va, end_va) != OverlapType::None 
+    || !start_va.aligned() {
+        return -1;
+    }
+    // TODO: add more error detection
+    let mut permission = MapPermission::U;
+    if _port & 1 != 0 { permission |= MapPermission::R; }
+    if _port & 2 != 0 { permission |= MapPermission::W; }
+    if _port & 4 != 0 { permission |= MapPermission::X; }
+    memory_set.insert_framed_area(
+        VirtAddr::from(_start), 
+        VirtAddr::from(_start + _len), 
+        permission);
+    0
+    
 }
 
 /// YOUR JOB: Implement munmap.
@@ -151,7 +192,18 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let memory_set = unsafe { current_memory_set().as_mut().unwrap() };
+    memory_set.sort_area_by_start();
+    let start_va = VirtAddr::from(_start);
+    if !start_va.aligned() { return -1; }
+    let end_va = VirtAddr::from(_start + _len);
+    match memory_set.overlap(start_va, end_va) {
+        OverlapType::Covered(idx) => {
+            memory_set.remove_framed_area(start_va, end_va, idx);
+            0
+        }
+        _ => { -1 }
+    }
 }
 
 /// change data segment size
@@ -168,10 +220,21 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-    -1
+    let current_task = current_task().unwrap();
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let new_task = current_task.spawn(data);
+        let res = new_task.pid.0 as isize;
+        new_task.inner_exclusive_access().get_trap_cx().x[10] = 0;
+        add_task(new_task);
+        res
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
@@ -180,5 +243,6 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio < 2 { return -1; }
+    _prio
 }

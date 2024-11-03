@@ -7,6 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::mm::MemorySet;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -98,6 +99,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
         .unwrap()
         .inner_exclusive_access()
         .get_trap_cx()
+}
+
+/// Get the current memory set 
+// TODO: Optimized method?
+pub fn current_memory_set() -> *mut MemorySet {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    &mut inner.memory_set as *mut MemorySet
 }
 
 ///Return to idle control flow for new scheduling
