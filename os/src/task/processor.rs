@@ -12,6 +12,8 @@ use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
 
+use crate::mm::MemorySet;
+
 /// Processor management structure
 pub struct Processor {
     ///The task currently executing on the current processor
@@ -90,6 +92,14 @@ pub fn current_task() -> Option<Arc<TaskControlBlock>> {
 pub fn current_user_token() -> usize {
     let task = current_task().unwrap();
     task.get_user_token()
+}
+
+/// Get the current memory set 
+// TODO: Optimized method?
+pub fn current_memory_set() -> *mut MemorySet {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    &mut inner.memory_set as *mut MemorySet
 }
 
 ///Get the mutable reference to trap context of current task

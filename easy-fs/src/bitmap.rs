@@ -29,7 +29,7 @@ impl Bitmap {
     pub fn alloc(&self, block_device: &Arc<dyn BlockDevice>) -> Option<usize> {
         for block_id in 0..self.blocks {
             let pos = get_block_cache(
-                block_id + self.start_block_id as usize,
+                block_id + self.start_block_id,
                 Arc::clone(block_device),
             )
             .lock()

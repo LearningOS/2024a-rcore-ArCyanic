@@ -5,6 +5,8 @@
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
 use super::File;
+use super::Stat;
+use super::StatMode;
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -13,6 +15,7 @@ use alloc::vec::Vec;
 use bitflags::*;
 use easy_fs::{EasyFileSystem, Inode};
 use lazy_static::*;
+use core::any::Any;
 
 /// inode in memory
 /// A wrapper around a filesystem inode
@@ -35,6 +38,22 @@ impl OSInode {
             readable,
             writable,
             inner: unsafe { UPSafeCell::new(OSInodeInner { offset: 0, inode }) },
+        }
+    }
+    /// get inode 
+    // pub fn get_inode(&self) -> Arc<Inode> {
+    //     let inner = self.inner.exclusive_access();
+    //     Arc::clone(&inner.inode)
+    // }
+    pub fn construct_stat(&self) -> Stat {
+        let inode = Arc::clone(&self.inner.exclusive_access().inode);
+        let inode_id = ROOT_INODE.find_inode_id_by_block_id_and_offset(Arc::clone(&inode)).unwrap();
+        Stat {
+            dev: 0,
+            ino: inode_id as u64,
+            mode: StatMode::FILE,
+            nlink: ROOT_INODE.cound_inode_id(inode_id),
+            pad: [0; 7]
         }
     }
     /// read all data from the inode
@@ -124,7 +143,25 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// linkat
+pub fn linkat(oldname: &str, newname: &str) -> i32 {
+    if let Some(inode_id) = ROOT_INODE.find_inode_id_by_name(oldname) {
+        ROOT_INODE.new_dirent(newname, inode_id);
+        return 0;
+    }
+    -1
+}
+
+/// unlinkat
+pub fn unlinkat(name: &str) -> i32 {
+    if ROOT_INODE.delete_dirent(name) { 0 }
+    else { -1 }
+}
+
 impl File for OSInode {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn readable(&self) -> bool {
         self.readable
     }

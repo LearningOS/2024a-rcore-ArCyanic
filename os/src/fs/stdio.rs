@@ -10,7 +10,12 @@ pub struct Stdin;
 /// stdout file for putting chars to console
 pub struct Stdout;
 
+use core::any::Any;
+
 impl File for Stdin {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn readable(&self) -> bool {
         true
     }
@@ -42,6 +47,9 @@ impl File for Stdin {
 }
 
 impl File for Stdout {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn readable(&self) -> bool {
         false
     }
